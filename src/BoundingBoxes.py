@@ -56,7 +56,7 @@ class BoundingBoxes:
                 if (iou[i][0] < iou_threshold):
                     color = "red"
                 ax.text(0.2, -0.3, "iou: %s" % (iou[i][0]), color=color, transform=ax.transAxes)
-        plt.savefig(f"{data_dir}/figures/figure.png")
+        plt.savefig(f"{data_dir}/{title}.png")
 
     def plot_metrics(self, history, metric_name, title, ylim=5):
         plt.title(title), plt.ylim(0, ylim), plt.plot(history.history[metric_name], color='blue', label=metric_name), plt.plot(history.history['val_' + metric_name], color='green', label='val_' + metric_name)
@@ -155,6 +155,21 @@ class BoundingBoxes:
         model.compile(loss=tf.keras.losses.CategoricalCrossentropy())
         return model
 
+    def intersection_over_union(self, pred_box, true_box):
+        xmin_pred, ymin_pred, xmax_pred, ymax_pred = np.split(pred_box, 4, axis=1)
+        xmin_true, ymin_true, xmax_true, ymax_true = np.split(true_box, 4, axis=1)
+        xmin_overlap = np.maximum(xmin_pred, xmin_true)
+        xmax_overlap = np.minimum(xmax_pred, xmax_true)
+        ymin_overlap = np.maximum(ymin_pred, ymin_true)
+        ymax_overlap = np.minimum(ymax_pred, ymax_true)
+        pred_box_area = (xmax_pred - xmin_pred) * (ymax_pred - ymin_pred)
+        true_box_area = (xmax_true - xmin_true) * (ymax_true - ymin_true)
+        overlap_area = np.maximum((xmax_overlap - xmin_overlap), 0) * np.maximum((ymax_overlap - ymin_overlap), 0)
+        union_area = (pred_box_area + true_box_area) - overlap_area
+        smoothing_factor = 1e-10
+        iou = (overlap_area + smoothing_factor) / (union_area + smoothing_factor)
+        return iou
+
 if __name__ == '__main__':
     bounding_boxes = BoundingBoxes()
     plt.rc('image', cmap='gray'), plt.rc('grid', linewidth=0), plt.rc('xtick', top=False, bottom=False, labelsize='large'), plt.rc('ytick', left=False, right=False, labelsize='large'), plt.rc('axes', facecolor='F8F8F8', titlesize="large", edgecolor='white'), plt.rc('text', color='a8151a'), plt.rc('figure', facecolor='F0F0F0')
@@ -169,4 +184,15 @@ if __name__ == '__main__':
     history = model.fit(x=training_dataset, batch_size=BATCH_SIZE, steps_per_epoch=steps_per_epoch, validation_data=validation_dataset, validation_steps=validation_steps, epochs=EPOCHS)
     loss = model.evaluate(validation_dataset, steps=validation_steps)
     print("Loss: ", loss)
-    model.save("birds.h5")
+    bounding_boxes.plot_metrics(history=history, metric_name="loss", title="Bounding Box Loss", ylim=0.2)
+    original_images, normalized_images, normalized_bboxes = bounding_boxes.dataset_to_numpy_with_original_bboxes_util(bounding_boxes.visualization_validation_dataset, N=500)
+    predicted_bboxes = model.predict(normalized_images, batch_size=32)
+    iou = bounding_boxes.intersection_over_union(predicted_bboxes, normalized_bboxes)
+    iou_threshold = 0.5
+    print("Number of predictions where iou > threshold(%s): %s" % (iou_threshold, (iou >= iou_threshold).sum()))
+    print("Number of predictions where iou < threshold(%s): %s" % (iou_threshold, (iou < iou_threshold).sum()))
+    n = 10
+    indexes = np.random.choice(len(predicted_bboxes), size=n)
+    iou_to_draw = iou[indexes]
+    norm_to_draw = original_images[indexes]
+    bounding_boxes.display_digits_with_boxes(original_images[indexes], predicted_bboxes[indexes], normalized_bboxes[indexes], iou[indexes], "True and Predicted values", bboxes_normalized=True)
